@@ -11,7 +11,10 @@ from urllib3.util.retry import Retry
 # 抑制 urllib3 的 OpenSSL 警告
 warnings.filterwarnings("ignore", category=UserWarning, module='urllib3')
 
-from idea2paper.config import LLM_API_KEY, LLM_API_URL, LLM_MODEL
+from idea2paper.config import (
+    LLM_API_KEY, LLM_API_URL, LLM_MODEL,
+    ANTHROPIC_API_KEY, LLM_PROVIDER
+)
 from idea2paper.infra.run_context import get_logger
 
 def _create_session_with_retries():
@@ -33,6 +36,113 @@ def _create_session_with_retries():
 
     return session
 
+
+def _call_anthropic(prompt: str, temperature: float = 0.7, max_tokens: int = 2000, timeout: int = 120) -> str:
+    """Call Anthropic/Claude API directly."""
+    logger = get_logger()
+    start_ts = time.time()
+
+    if not ANTHROPIC_API_KEY:
+        print("⚠️  Warning: ANTHROPIC_API_KEY not configured")
+        return ""
+
+    headers = {
+        "x-api-key": ANTHROPIC_API_KEY,
+        "Content-Type": "application/json",
+        "anthropic-version": "2023-06-01"
+    }
+
+    # Default to claude-sonnet if no model specified
+    model = LLM_MODEL if LLM_MODEL and "claude" in LLM_MODEL.lower() else "claude-sonnet-4-20250514"
+
+    data = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": prompt}]
+    }
+
+    # Anthropic uses top_p instead of temperature in some cases
+    if temperature > 0:
+        data["temperature"] = temperature
+
+    max_retries = 3
+    retry_delay = 2
+
+    for attempt in range(max_retries):
+        try:
+            session = _create_session_with_retries()
+
+            if attempt > 0:
+                print(f"   ⏳ Retrying Claude API call (attempt {attempt + 1}/{max_retries})...")
+                time.sleep(retry_delay)
+
+            response = session.post(
+                "https://api.anthropic.com/v1/messages",
+                headers=headers,
+                json=data,
+                timeout=timeout
+            )
+            response.raise_for_status()
+            session.close()
+
+            result = response.json()
+            content = result["content"][0]["text"]
+
+            if logger:
+                logger.log_llm_call(
+                    request={
+                        "model": model,
+                        "url": "https://api.anthropic.com/v1/messages",
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                        "timeout": timeout,
+                        "prompt": prompt,
+                        "provider": "anthropic"
+                    },
+                    response={
+                        "ok": True,
+                        "text": content,
+                        "latency_ms": int((time.time() - start_ts) * 1000)
+                    }
+                )
+            return content
+
+        except requests.exceptions.Timeout as e:
+            print(f"   ⚠️  Timeout (attempt {attempt + 1}/{max_retries})")
+            if attempt >= max_retries - 1:
+                print(f"❌ Claude API call failed (timeout): {e}")
+                return ""
+
+        except requests.exceptions.ConnectionError as e:
+            print(f"   ⚠️  Connection error (attempt {attempt + 1}/{max_retries}): {str(e)[:60]}")
+            if attempt >= max_retries - 1:
+                print(f"❌ Claude API call failed (connection error): {e}")
+                return ""
+
+        except Exception as e:
+            print(f"❌ Claude API call failed: {e}")
+            if logger:
+                logger.log_llm_call(
+                    request={
+                        "model": model,
+                        "url": "https://api.anthropic.com/v1/messages",
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                        "timeout": timeout,
+                        "prompt": prompt,
+                        "provider": "anthropic"
+                    },
+                    response={
+                        "ok": False,
+                        "text": "",
+                        "latency_ms": int((time.time() - start_ts) * 1000),
+                        "error": str(e)
+                    }
+                )
+            return ""
+
+    return ""
+
 def call_llm(prompt: str, temperature: float = 0.7, max_tokens: int = 2000, timeout: int = 120) -> str:
     """
     调用 LLM API（支持重试和延长超时）
@@ -43,6 +153,10 @@ def call_llm(prompt: str, temperature: float = 0.7, max_tokens: int = 2000, time
         max_tokens: 最大 token 数
         timeout: 请求超时时间（秒），默认 120s
     """
+    # Route to Anthropic/Claude if configured
+    if LLM_PROVIDER == "anthropic" or (ANTHROPIC_API_KEY and not LLM_API_KEY):
+        return _call_anthropic(prompt, temperature, max_tokens, timeout)
+
     logger = get_logger()
     start_ts = time.time()
 

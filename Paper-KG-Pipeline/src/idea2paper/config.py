@@ -91,6 +91,30 @@ LLM_MODEL = _get(
     cfg_path=["llm", "model"],
 )
 
+# ===================== Anthropic/Claude API 配置 =====================
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+LLM_PROVIDER = _get(
+    "LLM_PROVIDER",
+    "auto",  # auto, anthropic, siliconflow, openai
+    cast=str,
+    cfg_path=["llm", "provider"],
+)
+ANTHROPIC_MODEL = _get(
+    "ANTHROPIC_MODEL",
+    "claude-sonnet-4-20250514",
+    cast=str,
+    cfg_path=["llm", "anthropic_model"],
+)
+
+# ===================== OpenAI Embeddings 配置 =====================
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+EMBEDDING_PROVIDER = _get(
+    "EMBEDDING_PROVIDER",
+    "auto",  # auto, openai, siliconflow
+    cast=str,
+    cfg_path=["embedding", "provider"],
+)
+
 # ===================== Run Logging 配置 =====================
 LOG_ROOT = _get(
     "I2P_LOG_DIR",
